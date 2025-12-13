@@ -1,4 +1,3 @@
-// server.js
 import express from "express";
 import http from "http";
 import cors from "cors";
@@ -28,12 +27,11 @@ const DB_CONFIG = {
 };
 
 let db;
-
 (async function initDb() {
   try {
     db = await mysql.createPool(DB_CONFIG);
     await db.query("SELECT 1");
-    // console.log("✅ Connected to MySQL");
+    console.log("✅ Connected to MySQL");
   } catch (err) {
     console.error("❌ MySQL connection error:", err.message);
     process.exit(1);
@@ -72,22 +70,13 @@ function getPrivateRoomId(a, b) {
   return [a, b].sort().join("#");
 }
 
-// ✅ SAFE + DEBUGGED
 async function getAllUsersWithStatus() {
-  if (!db) {
-    console.warn("⚠️ DB not ready yet");
-    return [];
-  }
-
+  if (!db) return [];
   const [rows] = await db.execute("SELECT username FROM users");
-
-  const result = rows.map((u) => ({
+  return rows.map((u) => ({
     username: u.username,
     online: Boolean(userToSocket[u.username]),
   }));
-
-  // console.log("📤 users-list payload:", result);
-  return result;
 }
 
 // ---------- Authentication ----------
@@ -120,7 +109,6 @@ app.post("/api/register", async (req, res) => {
 
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
-
   if (!username || !password)
     return res.status(400).json({ error: "Username and password required" });
 
@@ -158,11 +146,10 @@ async function verifyToken(token) {
      WHERE s.session_token = ?`,
     [token]
   );
-
   return rows.length ? rows[0].username : null;
 }
 
-// ---------- Socket.IO Auth ----------
+// ---------- Socket.IO ----------
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
@@ -181,14 +168,16 @@ io.use(async (socket, next) => {
   }
 });
 
-// ---------- Socket.IO ----------
 io.on("connection", async (socket) => {
   console.log("🟢 Connected:", socket.username);
 
+  // Rooms
   socket.emit("rooms-list", rooms);
 
+  // Users
   io.emit("users-list", await getAllUsersWithStatus());
 
+  // Load room messages
   for (const room of rooms) {
     const [rows] = await db.execute(
       `SELECT sender AS username, message, created_at AS time
@@ -198,13 +187,14 @@ io.on("connection", async (socket) => {
        LIMIT 100`,
       [room]
     );
-
     socket.emit("room-messages", { room, messages: rows });
   }
 
+  // ---------- Join / Leave ----------
   socket.on("join-room", ({ room }) => room && socket.join(room));
   socket.on("leave-room", ({ room }) => room && socket.leave(room));
 
+  // ---------- Public Messages ----------
   socket.on("send-room-message", async ({ room, text }) => {
     if (!room || !text) return;
 
@@ -212,35 +202,43 @@ io.on("connection", async (socket) => {
 
     io.to(room).emit("receive-room-message", {
       room,
-      message: {
-        username: socket.username,
-        message: text,
-        time: new Date().toISOString(),
-      },
+      message: { username: socket.username, message: text, time: new Date().toISOString() },
     });
   });
 
+  // ---------- Private Messages ----------
   socket.on("send-private-message", async ({ toUsername, text }) => {
     if (!toUsername || !text) return;
 
     await savePrivateMessage(socket.username, toUsername, text);
 
     const roomId = getPrivateRoomId(socket.username, toUsername);
-    const msg = {
-      from: socket.username,
-      to: toUsername,
-      message: text,
-      time: new Date().toISOString(),
-    };
+    const msg = { from: socket.username, to: toUsername, message: text, time: new Date().toISOString() };
 
     const toSocket = userToSocket[toUsername];
-    if (toSocket) {
-      io.to(toSocket).emit("receive-private-message", { roomId, message: msg });
-    }
+    if (toSocket) io.to(toSocket).emit("receive-private-message", { roomId, message: msg });
 
     socket.emit("receive-private-message", { roomId, message: msg });
   });
 
+  // ---------- Load Private Messages History ----------
+  socket.on("load-private-messages", async ({ toUsername }) => {
+    if (!toUsername) return;
+
+    const roomId = getPrivateRoomId(socket.username, toUsername);
+
+    const [rows] = await db.execute(
+      `SELECT sender AS \`from\`, receiver AS \`to\`, message, created_at AS time
+       FROM private_messages
+       WHERE (sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)
+       ORDER BY created_at ASC`,
+      [socket.username, toUsername, toUsername, socket.username]
+    );
+
+    socket.emit("private-messages-loaded", { roomId, messages: rows });
+  });
+
+  // ---------- Disconnect ----------
   socket.on("disconnect", async () => {
     console.log("🔴 Disconnected:", socket.username);
 
@@ -251,7 +249,7 @@ io.on("connection", async (socket) => {
   });
 });
 
-// ---------- Health ----------
+// Health check
 app.get("/api/health", (_, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 4000;

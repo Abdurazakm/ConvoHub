@@ -10,6 +10,7 @@ export default function PrivateChatModal({
   const [text, setText] = useState("");
   const ref = useRef(null);
 
+  // Scroll to bottom when messages update
   useEffect(() => {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
   }, [messages]);

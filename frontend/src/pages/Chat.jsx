@@ -10,8 +10,6 @@ const SERVER = "http://localhost:4000";
 
 export default function Chat() {
   const navigate = useNavigate();
-
-  // 🔐 persistent auth
   const token = localStorage.getItem("token");
   const username = localStorage.getItem("username");
 
@@ -19,37 +17,38 @@ export default function Chat() {
   const [rooms, setRooms] = useState([]);
   const [currentRoom, setCurrentRoom] = useState("General");
   const [roomMessages, setRoomMessages] = useState({});
-  const [users, setUsers] = useState([]); // ✅ all users (online + offline)
+  const [users, setUsers] = useState([]);
   const [privateChats, setPrivateChats] = useState({});
   const [privateTarget, setPrivateTarget] = useState(null);
 
-  // 🚫 protect route
+  // Protect route
   useEffect(() => {
     if (!token || !username) navigate("/");
   }, [token, username, navigate]);
 
-  // 🔌 socket connection
+  // Socket connection
   useEffect(() => {
     if (!token || !username) return;
 
     const s = io(SERVER, { auth: { token } });
     setSocket(s);
 
+    // Rooms
     s.on("rooms-list", (rs) => setRooms(rs || []));
 
-    // ✅ USERS LIST (IMPORTANT)
+    // Users list (online + offline)
     s.on("users-list", (list) => {
-      // console.log("📥 users-list received:", list);
-
       if (Array.isArray(list)) {
         setUsers(list.filter((u) => u.username !== username));
       }
     });
 
+    // Room messages
     s.on("room-messages", ({ room, messages }) => {
       setRoomMessages((prev) => ({ ...prev, [room]: messages }));
     });
 
+    // New room message
     s.on("receive-room-message", ({ room, message }) => {
       setRoomMessages((prev) => ({
         ...prev,
@@ -57,6 +56,7 @@ export default function Chat() {
       }));
     });
 
+    // Private messages received
     s.on("receive-private-message", ({ roomId, message }) => {
       setPrivateChats((prev) => ({
         ...prev,
@@ -64,6 +64,7 @@ export default function Chat() {
       }));
     });
 
+    // Private messages loaded
     s.on("private-messages-loaded", ({ roomId, messages }) => {
       setPrivateChats((prev) => ({
         ...prev,
@@ -71,41 +72,53 @@ export default function Chat() {
       }));
     });
 
-    return () => {
-      console.log("🔌 Socket disconnected");
-      s.disconnect();
-    };
+    // Reload previous private chats on refresh
+    const savedChats = JSON.parse(localStorage.getItem("privateChats") || "[]");
+    savedChats.forEach((roomId) => {
+      const otherUser = roomId.split("#").find((u) => u !== username);
+      if (otherUser) startPrivateChat(otherUser, s);
+    });
+
+    return () => s.disconnect();
   }, [token, username]);
 
-  // 🚪 join / leave room
+  // Join/leave room
   useEffect(() => {
     if (!socket || !currentRoom) return;
-
     socket.emit("join-room", { room: currentRoom });
     return () => socket.emit("leave-room", { room: currentRoom });
   }, [currentRoom, socket]);
 
-  // 📤 send room message
+  // Send room message
   const sendRoomMessage = (text) => {
     if (!socket || !text.trim()) return;
     socket.emit("send-room-message", { room: currentRoom, text });
   };
 
-  // 🔒 start private chat
-  const startPrivateChat = (target) => {
-    if (!target || target === username) return;
+  // Start private chat
+  const startPrivateChat = (target, s = socket) => {
+    if (!target || target === username || !s) return;
     setPrivateTarget(target);
-    socket.emit("load-private-messages", { toUsername: target });
+
+    const roomId = [username, target].sort().join("#");
+
+    // Save active chats in localStorage
+    const saved = JSON.parse(localStorage.getItem("privateChats") || "[]");
+    if (!saved.includes(roomId)) {
+      saved.push(roomId);
+      localStorage.setItem("privateChats", JSON.stringify(saved));
+    }
+
+    s.emit("load-private-messages", { toUsername: target });
   };
 
-  // 📩 send private message
+  // Send private message
   const sendPrivateMessage = (toUsername, text) => {
     if (!socket || !text.trim()) return;
     socket.emit("send-private-message", { toUsername, text });
   };
 
-  const privateRoomId =
-    privateTarget && [username, privateTarget].sort().join("#");
+  const privateRoomId = privateTarget && [username, privateTarget].sort().join("#");
 
   return (
     <div className="h-screen flex bg-gray-900 text-white overflow-hidden">
