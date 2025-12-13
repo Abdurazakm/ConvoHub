@@ -28,17 +28,20 @@ const DB_CONFIG = {
 };
 
 let db;
+
 (async function initDb() {
   try {
     db = await mysql.createPool(DB_CONFIG);
-    console.log("Connected to MySQL");
+    await db.query("SELECT 1");
+    // console.log("✅ Connected to MySQL");
   } catch (err) {
-    console.error("MySQL connection error:", err.message);
+    console.error("❌ MySQL connection error:", err.message);
+    process.exit(1);
   }
 })();
 
 // ---------- In-memory maps ----------
-const socketToUser = {}; // socketId -> { id, username }
+const socketToUser = {}; // socketId -> username
 const userToSocket = {}; // username -> socketId
 const rooms = ["General", "Tech Talk", "Random"];
 
@@ -50,7 +53,7 @@ async function savePublicMessage(room, sender, message) {
       [room, sender, message]
     );
   } catch (err) {
-    console.error("savePublicMessage error", err.message);
+    console.error("savePublicMessage error:", err.message);
   }
 }
 
@@ -61,7 +64,7 @@ async function savePrivateMessage(sender, receiver, message) {
       [sender, receiver, message]
     );
   } catch (err) {
-    console.error("savePrivateMessage error", err.message);
+    console.error("savePrivateMessage error:", err.message);
   }
 }
 
@@ -69,9 +72,25 @@ function getPrivateRoomId(a, b) {
   return [a, b].sort().join("#");
 }
 
-// ---------- Authentication routes ----------
+// ✅ SAFE + DEBUGGED
+async function getAllUsersWithStatus() {
+  if (!db) {
+    console.warn("⚠️ DB not ready yet");
+    return [];
+  }
 
-// Register user
+  const [rows] = await db.execute("SELECT username FROM users");
+
+  const result = rows.map((u) => ({
+    username: u.username,
+    online: Boolean(userToSocket[u.username]),
+  }));
+
+  // console.log("📤 users-list payload:", result);
+  return result;
+}
+
+// ---------- Authentication ----------
 app.post("/api/register", async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password)
@@ -82,24 +101,26 @@ app.post("/api/register", async (req, res) => {
       "SELECT id FROM users WHERE username = ?",
       [username]
     );
-    if (rows.length > 0)
+
+    if (rows.length)
       return res.status(400).json({ error: "Username already exists" });
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    await db.execute("INSERT INTO users (username, password) VALUES (?, ?)", [
-      username,
-      hashedPassword,
-    ]);
-    res.json({ ok: true, message: "User registered successfully" });
+    const hashed = await bcrypt.hash(password, 10);
+    await db.execute(
+      "INSERT INTO users (username, password) VALUES (?, ?)",
+      [username, hashed]
+    );
+
+    res.json({ ok: true });
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// Login user
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
+
   if (!username || !password)
     return res.status(400).json({ error: "Username and password required" });
 
@@ -108,17 +129,18 @@ app.post("/api/login", async (req, res) => {
       "SELECT id, password FROM users WHERE username = ?",
       [username]
     );
-    if (rows.length === 0)
-      return res.status(400).json({ error: "Invalid username or password" });
 
-    const user = rows[0];
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(400).json({ error: "Invalid username or password" });
+    if (!rows.length)
+      return res.status(400).json({ error: "Invalid credentials" });
+
+    const match = await bcrypt.compare(password, rows[0].password);
+    if (!match)
+      return res.status(400).json({ error: "Invalid credentials" });
 
     const token = uuidv4();
     await db.execute(
       "INSERT INTO sessions (user_id, session_token) VALUES (?, ?)",
-      [user.id, token]
+      [rows[0].id, token]
     );
 
     res.json({ ok: true, token, username });
@@ -128,136 +150,111 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// Verify session token middleware
 async function verifyToken(token) {
-  try {
-    const [rows] = await db.execute(
-      "SELECT u.username FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.session_token = ?",
-      [token]
-    );
-    if (rows.length === 0) return null;
-    return rows[0].username;
-  } catch (err) {
-    console.error(err.message);
-    return null;
-  }
-}
-
-// ---------- Socket.IO ----------
-io.use(async (socket, next) => {
-  const token = socket.handshake.auth.token;
-  if (!token) return next(new Error("Authentication required"));
-  const username = await verifyToken(token);
-  if (!username) return next(new Error("Invalid token"));
-
-  socket.username = username;
-  socketToUser[socket.id] = { username };
-  userToSocket[username] = socket.id;
-  next();
-});
-
-io.on("connection", async (socket) => {
-  console.log("User connected:", socket.username);
-
-  // send rooms list
-  socket.emit("rooms-list", rooms);
-
-  // send online users
-  io.emit(
-    "online-users",
-    Object.values(socketToUser).map((u) => u.username)
+  const [rows] = await db.execute(
+    `SELECT u.username
+     FROM sessions s
+     JOIN users u ON s.user_id = u.id
+     WHERE s.session_token = ?`,
+    [token]
   );
 
-  // load last 100 messages per room
-  for (const r of rooms) {
+  return rows.length ? rows[0].username : null;
+}
+
+// ---------- Socket.IO Auth ----------
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token;
+    if (!token) return next(new Error("No token"));
+
+    const username = await verifyToken(token);
+    if (!username) return next(new Error("Invalid token"));
+
+    socket.username = username;
+    socketToUser[socket.id] = username;
+    userToSocket[username] = socket.id;
+
+    next();
+  } catch (err) {
+    next(new Error("Auth failed"));
+  }
+});
+
+// ---------- Socket.IO ----------
+io.on("connection", async (socket) => {
+  console.log("🟢 Connected:", socket.username);
+
+  socket.emit("rooms-list", rooms);
+
+  io.emit("users-list", await getAllUsersWithStatus());
+
+  for (const room of rooms) {
     const [rows] = await db.execute(
-      "SELECT sender AS username, message, created_at as time FROM public_messages WHERE room = ? ORDER BY id ASC LIMIT 100",
-      [r]
+      `SELECT sender AS username, message, created_at AS time
+       FROM public_messages
+       WHERE room = ?
+       ORDER BY id ASC
+       LIMIT 100`,
+      [room]
     );
-    socket.emit("room-messages", { room: r, messages: rows });
+
+    socket.emit("room-messages", { room, messages: rows });
   }
 
-  // join room
-  socket.on("join-room", ({ room }) => {
-    if (!room) return;
-    socket.join(room);
-  });
+  socket.on("join-room", ({ room }) => room && socket.join(room));
+  socket.on("leave-room", ({ room }) => room && socket.leave(room));
 
-  // leave room
-  socket.on("leave-room", ({ room }) => {
-    if (!room) return;
-    socket.leave(room);
-  });
-
-  // public message
   socket.on("send-room-message", async ({ room, text }) => {
     if (!room || !text) return;
+
     await savePublicMessage(room, socket.username, text);
 
     io.to(room).emit("receive-room-message", {
       room,
-      message: { username: socket.username, message: text, time: new Date().toISOString() },
+      message: {
+        username: socket.username,
+        message: text,
+        time: new Date().toISOString(),
+      },
     });
   });
 
-  // private message
   socket.on("send-private-message", async ({ toUsername, text }) => {
     if (!toUsername || !text) return;
+
     await savePrivateMessage(socket.username, toUsername, text);
 
-    const msgObj = {
+    const roomId = getPrivateRoomId(socket.username, toUsername);
+    const msg = {
       from: socket.username,
       to: toUsername,
       message: text,
       time: new Date().toISOString(),
     };
-    const roomId = getPrivateRoomId(socket.username, toUsername);
 
-    const toSocketId = userToSocket[toUsername];
-    if (toSocketId) io.to(toSocketId).emit("receive-private-message", { roomId, message: msgObj });
-
-    socket.emit("receive-private-message", { roomId, message: msgObj });
-  });
-
-  // load private messages
-  socket.on("load-private-messages", async ({ toUsername }) => {
-    if (!toUsername) return;
-    const roomId = getPrivateRoomId(socket.username, toUsername);
-    try {
-      const [rows] = await db.execute(
-        "SELECT sender AS from, receiver AS to, message, created_at AS time FROM private_messages WHERE (sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?) ORDER BY created_at ASC LIMIT 100",
-        [socket.username, toUsername, toUsername, socket.username]
-      );
-      socket.emit("private-messages-loaded", { roomId, messages: rows });
-    } catch (err) {
-      console.error("loadPrivateMessages error", err.message);
+    const toSocket = userToSocket[toUsername];
+    if (toSocket) {
+      io.to(toSocket).emit("receive-private-message", { roomId, message: msg });
     }
+
+    socket.emit("receive-private-message", { roomId, message: msg });
   });
 
-  // typing indicator
-  socket.on("typing", ({ room, isPrivate, privateRoomId }) => {
-    if (isPrivate && privateRoomId) {
-      socket.to(privateRoomId).emit("typing", { privateRoomId, username: socket.username });
-    } else if (room) {
-      socket.to(room).emit("typing", { room, username: socket.username });
-    }
-  });
-
-  // disconnect
   socket.on("disconnect", async () => {
+    console.log("🔴 Disconnected:", socket.username);
+
     delete userToSocket[socket.username];
     delete socketToUser[socket.id];
 
-    io.emit(
-      "online-users",
-      Object.values(socketToUser).map((u) => u.username)
-    );
+    io.emit("users-list", await getAllUsersWithStatus());
   });
 });
 
-// ---------- API health ----------
-app.get("/api/health", (req, res) => res.json({ ok: true }));
+// ---------- Health ----------
+app.get("/api/health", (_, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 4000;
-server.listen(PORT, () => console.log(`ConvoHub Backend running on port ${PORT}`));
-// ---------- Start server ----------
+server.listen(PORT, () =>
+  console.log(`🚀 ConvoHub Backend running on port ${PORT}`)
+);
