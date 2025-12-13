@@ -1,13 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import axios from "axios";
+import { login } from "../api.js";
 
 export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const navigate = useNavigate();
-
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
   const handleLogin = async () => {
     if (!username || !password) {
@@ -16,7 +14,7 @@ export default function Login() {
     }
 
     try {
-      const res = await axios.post(`${API_URL}/api/login`, {
+      const res = await login({
         username,
         password,
       });
@@ -24,10 +22,10 @@ export default function Login() {
       alert("Login successful");
 
       // Optional: save token to localStorage
-      localStorage.setItem("token", res.data.token);
+      localStorage.setItem("token", res.token);
       localStorage.setItem("username", username);
 
-      navigate("/chat", { state: { username, token: res.data.token } });
+      navigate("/chat", { state: { username, token: res.token } });
     } catch (err) {
       alert(err.response?.data?.message || "Login failed");
     }

@@ -1,13 +1,11 @@
 import { useState } from "react";
-import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { register } from "../api.js";
 
 export default function Register() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const navigate = useNavigate(); // ✅ now defined
-
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
   const handleRegister = async () => {
     if (!username || !password) {
@@ -16,11 +14,11 @@ export default function Register() {
     }
 
     try {
-      const res = await axios.post(`${API_URL}/api/register`, {
+      const res = await register({
         username,
         password,
       });
-      alert(res.data.message);
+      alert(res.message);
 
       navigate("/"); // ✅ go to Login
     } catch (err) {
@@ -58,7 +56,7 @@ export default function Register() {
         Already have an account?{" "}
         <span
           className="text-blue-400 cursor-pointer hover:underline"
-          onClick={() => navigate("/")}   
+          onClick={() => navigate("/")}
         >
           Login
         </span>
