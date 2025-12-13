@@ -36,7 +36,7 @@ export default function Chat() {
     // Rooms
     s.on("rooms-list", (rs) => setRooms(rs || []));
 
-    // Users list (online + offline)
+    // Users list
     s.on("users-list", (list) => {
       if (Array.isArray(list)) {
         setUsers(list.filter((u) => u.username !== username));
@@ -72,7 +72,7 @@ export default function Chat() {
       }));
     });
 
-    // Reload previous private chats on refresh
+    // Restore previous private chats
     const savedChats = JSON.parse(localStorage.getItem("privateChats") || "[]");
     savedChats.forEach((roomId) => {
       const otherUser = roomId.split("#").find((u) => u !== username);
@@ -82,10 +82,13 @@ export default function Chat() {
     return () => s.disconnect();
   }, [token, username]);
 
-  // Join/leave room
+  // Join/leave room + load messages
   useEffect(() => {
     if (!socket || !currentRoom) return;
+
     socket.emit("join-room", { room: currentRoom });
+    socket.emit("get-room-messages", { room: currentRoom });
+
     return () => socket.emit("leave-room", { room: currentRoom });
   }, [currentRoom, socket]);
 

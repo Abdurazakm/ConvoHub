@@ -86,19 +86,18 @@ app.post("/api/register", async (req, res) => {
     return res.status(400).json({ error: "Username and password required" });
 
   try {
-    const [rows] = await db.execute(
-      "SELECT id FROM users WHERE username = ?",
-      [username]
-    );
+    const [rows] = await db.execute("SELECT id FROM users WHERE username = ?", [
+      username,
+    ]);
 
     if (rows.length)
       return res.status(400).json({ error: "Username already exists" });
 
     const hashed = await bcrypt.hash(password, 10);
-    await db.execute(
-      "INSERT INTO users (username, password) VALUES (?, ?)",
-      [username, hashed]
-    );
+    await db.execute("INSERT INTO users (username, password) VALUES (?, ?)", [
+      username,
+      hashed,
+    ]);
 
     res.json({ ok: true });
   } catch (err) {
@@ -122,8 +121,7 @@ app.post("/api/login", async (req, res) => {
       return res.status(400).json({ error: "Invalid credentials" });
 
     const match = await bcrypt.compare(password, rows[0].password);
-    if (!match)
-      return res.status(400).json({ error: "Invalid credentials" });
+    if (!match) return res.status(400).json({ error: "Invalid credentials" });
 
     const token = uuidv4();
     await db.execute(
@@ -193,6 +191,25 @@ io.on("connection", async (socket) => {
   // ---------- Join / Leave ----------
   socket.on("join-room", ({ room }) => room && socket.join(room));
   socket.on("leave-room", ({ room }) => room && socket.leave(room));
+  // Load messages for a specific room on demand
+  socket.on("get-room-messages", async ({ room }) => {
+    if (!room) return;
+
+    try {
+      const [rows] = await db.execute(
+        `SELECT sender AS username, message, created_at AS time
+       FROM public_messages
+       WHERE room = ?
+       ORDER BY id ASC
+       LIMIT 100`,
+        [room]
+      );
+
+      socket.emit("room-messages", { room, messages: rows });
+    } catch (err) {
+      console.error("get-room-messages error:", err.message);
+    }
+  });
 
   // ---------- Public Messages ----------
   socket.on("send-room-message", async ({ room, text }) => {
@@ -202,7 +219,11 @@ io.on("connection", async (socket) => {
 
     io.to(room).emit("receive-room-message", {
       room,
-      message: { username: socket.username, message: text, time: new Date().toISOString() },
+      message: {
+        username: socket.username,
+        message: text,
+        time: new Date().toISOString(),
+      },
     });
   });
 
@@ -213,10 +234,16 @@ io.on("connection", async (socket) => {
     await savePrivateMessage(socket.username, toUsername, text);
 
     const roomId = getPrivateRoomId(socket.username, toUsername);
-    const msg = { from: socket.username, to: toUsername, message: text, time: new Date().toISOString() };
+    const msg = {
+      from: socket.username,
+      to: toUsername,
+      message: text,
+      time: new Date().toISOString(),
+    };
 
     const toSocket = userToSocket[toUsername];
-    if (toSocket) io.to(toSocket).emit("receive-private-message", { roomId, message: msg });
+    if (toSocket)
+      io.to(toSocket).emit("receive-private-message", { roomId, message: msg });
 
     socket.emit("receive-private-message", { roomId, message: msg });
   });
