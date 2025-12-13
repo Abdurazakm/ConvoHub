@@ -73,11 +73,11 @@ export default function Chat() {
     });
 
     // Restore previous private chats
-    const savedChats = JSON.parse(localStorage.getItem("privateChats") || "[]");
-    savedChats.forEach((roomId) => {
-      const otherUser = roomId.split("#").find((u) => u !== username);
-      if (otherUser) startPrivateChat(otherUser, s);
-    });
+    // const savedChats = JSON.parse(localStorage.getItem("privateChats") || "[]");
+    // savedChats.forEach((roomId) => {
+    //   const otherUser = roomId.split("#").find((u) => u !== username);
+    //   if (otherUser) startPrivateChat(otherUser, s);
+    // });
 
     return () => s.disconnect();
   }, [token, username]);

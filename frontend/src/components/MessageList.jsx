@@ -1,17 +1,9 @@
-import React, { useEffect, useRef } from "react";
+import React from "react";
 
 export default function MessageList({ messages = [], currentUser }) {
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (ref.current) {
-      ref.current.scrollTop = ref.current.scrollHeight;
-    }
-  }, [messages]);
-
   return (
-    <div ref={ref} className="p-4 overflow-auto h-full space-y-2">
-      {messages.map((m, i) => {
+    <div className="p-4 overflow-y-auto h-full space-y-2 flex flex-col-reverse overscroll-contain">
+      {[...messages].reverse().map((m, i) => {
         const sender = m.username || m.from;
         const isMe = sender === currentUser;
 
