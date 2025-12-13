@@ -93,9 +93,20 @@ Technology Stack
 slack-chat/
 ├─ README.md
 ├─ backend/
-│  ├─ mysql.sql            # Database schema
-│  ├─ package.json
-│  ├─ server.js            # Express + Socket.IO server
+│  ├─ server.js              # Small entry point
+│  ├─ config/
+│  │  └─ db.js               # Database configuration
+│  ├─ routes/
+│  │  └─ auth.routes.js      # Login/register routes
+│  ├─ socket/
+│  │  ├─ index.js            # Socket.IO setup
+│  │  ├─ auth.middleware.js  # Socket authentication
+│  │  ├─ rooms.js            # Room events
+│  │  └─ private.js          # Private chat
+│  │  └─ user.js
+│  ├─ services/
+│  │  ├─ message.service.js  # Database message logic
+│  │  └─ user.service.js     # User/status logic
 ├─ frontend/
 │  ├─ eslint.config.js
 │  ├─ index.html
