@@ -19,7 +19,7 @@ export default function Chat() {
   const [rooms, setRooms] = useState([]);
   const [currentRoom, setCurrentRoom] = useState("General");
   const [roomMessages, setRoomMessages] = useState({});
-  const [onlineUsers, setOnlineUsers] = useState([]);
+  const [users, setUsers] = useState([]); // ✅ all users (online + offline)
   const [privateChats, setPrivateChats] = useState({});
   const [privateTarget, setPrivateTarget] = useState(null);
 
@@ -37,6 +37,15 @@ export default function Chat() {
 
     s.on("rooms-list", (rs) => setRooms(rs || []));
 
+    // ✅ USERS LIST (IMPORTANT)
+    s.on("users-list", (list) => {
+      // console.log("📥 users-list received:", list);
+
+      if (Array.isArray(list)) {
+        setUsers(list.filter((u) => u.username !== username));
+      }
+    });
+
     s.on("room-messages", ({ room, messages }) => {
       setRoomMessages((prev) => ({ ...prev, [room]: messages }));
     });
@@ -47,8 +56,6 @@ export default function Chat() {
         [room]: [...(prev[room] || []), message],
       }));
     });
-
-    s.on("online-users", (list) => setOnlineUsers(list || []));
 
     s.on("receive-private-message", ({ roomId, message }) => {
       setPrivateChats((prev) => ({
@@ -64,31 +71,36 @@ export default function Chat() {
       }));
     });
 
-    return () => s.disconnect();
+    return () => {
+      console.log("🔌 Socket disconnected");
+      s.disconnect();
+    };
   }, [token, username]);
 
   // 🚪 join / leave room
   useEffect(() => {
     if (!socket || !currentRoom) return;
+
     socket.emit("join-room", { room: currentRoom });
     return () => socket.emit("leave-room", { room: currentRoom });
   }, [currentRoom, socket]);
 
   // 📤 send room message
   const sendRoomMessage = (text) => {
-    if (!socket || !text) return;
+    if (!socket || !text.trim()) return;
     socket.emit("send-room-message", { room: currentRoom, text });
   };
 
-  // 🔒 private chat
+  // 🔒 start private chat
   const startPrivateChat = (target) => {
     if (!target || target === username) return;
     setPrivateTarget(target);
     socket.emit("load-private-messages", { toUsername: target });
   };
 
+  // 📩 send private message
   const sendPrivateMessage = (toUsername, text) => {
-    if (!socket || !text) return;
+    if (!socket || !text.trim()) return;
     socket.emit("send-private-message", { toUsername, text });
   };
 
@@ -96,10 +108,10 @@ export default function Chat() {
     privateTarget && [username, privateTarget].sort().join("#");
 
   return (
-    <div className="h-screen flex bg-gray-900 text-white">
+    <div className="h-screen flex bg-gray-900 text-white overflow-hidden">
       <Sidebar
         rooms={rooms}
-        users={onlineUsers.filter((u) => u !== username)}
+        users={users}
         onRoomSelect={setCurrentRoom}
         onUserSelect={startPrivateChat}
         currentRoom={currentRoom}
@@ -112,7 +124,6 @@ export default function Chat() {
         </div>
 
         <div className="flex-1 bg-slate-800 overflow-hidden">
-          {/* ✅ UPDATED */}
           <MessageList
             messages={roomMessages[currentRoom] || []}
             currentUser={username}
@@ -126,7 +137,7 @@ export default function Chat() {
         <PrivateChatModal
           user={privateTarget}
           messages={privateChats[privateRoomId] || []}
-          currentUser={username}   // ✅ UPDATED
+          currentUser={username}
           onClose={() => setPrivateTarget(null)}
           onSend={(text) => sendPrivateMessage(privateTarget, text)}
         />
