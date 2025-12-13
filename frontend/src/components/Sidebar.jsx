@@ -12,7 +12,7 @@ export default function Sidebar({ rooms, users, onRoomSelect, onUserSelect }) {
       <div className="flex-1 overflow-auto">
         <ChannelList rooms={rooms} onRoomSelect={onRoomSelect} />
         <div className="mt-6">
-          <h3 className="text-lg font-semibold mb-2">Online</h3>
+          <h3 className="text-lg font-semibold mb-2">User</h3>
           <UsersList users={users} onUserSelect={onUserSelect} />
         </div>
       </div>

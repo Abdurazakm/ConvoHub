@@ -1,96 +1,134 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { io } from "socket.io-client";
-import { useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import MessageList from "../components/MessageList";
 import MessageInput from "../components/MessageInput";
 import PrivateChatModal from "../components/PrivateChatModal";
 
-const SERVER = import.meta.env.VITE_SERVER_URL || "http://localhost:5000";
+const SERVER = "http://localhost:4000"; // ✅ FIXED PORT
 
 export default function Chat() {
-  const location = useLocation();
+  const navigate = useNavigate();
+
+  // ✅ persistent auth
+  const token = localStorage.getItem("token");
+  const username = localStorage.getItem("username");
+
   const [socket, setSocket] = useState(null);
   const [rooms, setRooms] = useState([]);
-  const [currentRoom, setCurrentRoom] = useState("general");
-  const [roomMessages, setRoomMessages] = useState({}); // { room: [messages] }
+  const [currentRoom, setCurrentRoom] = useState("General");
+  const [roomMessages, setRoomMessages] = useState({});
   const [onlineUsers, setOnlineUsers] = useState([]);
-  const [privateChats, setPrivateChats] = useState({}); // { roomId: [messages] }
-  const [privateTarget, setPrivateTarget] = useState(null); // username for modal
-  const [username, setUsername] = useState(location.state?.username || null);
+  const [privateChats, setPrivateChats] = useState({});
+  const [privateTarget, setPrivateTarget] = useState(null);
 
+  // 🔐 protect route
   useEffect(() => {
-    const s = io(SERVER);
+    if (!token || !username) {
+      navigate("/");
+    }
+  }, [token, username, navigate]);
+
+  // 🔌 socket connection
+  useEffect(() => {
+    if (!token || !username) return;
+
+    const s = io(SERVER, {
+      auth: { token },
+    });
+
     setSocket(s);
 
     s.on("connect", () => {
-      s.emit("join-server", { username });
+      console.log("Connected:", s.id);
     });
 
+    // 📡 server events
     s.on("rooms-list", (rs) => setRooms(rs || []));
+
     s.on("room-messages", ({ room, messages }) => {
-      setRoomMessages((p) => ({ ...p, [room]: messages }));
+      setRoomMessages((prev) => ({ ...prev, [room]: messages }));
     });
+
     s.on("receive-room-message", ({ room, message }) => {
-      setRoomMessages((p) => ({ ...p, [room]: [...(p[room] || []), message] }));
+      setRoomMessages((prev) => ({
+        ...prev,
+        [room]: [...(prev[room] || []), message],
+      }));
     });
 
     s.on("online-users", (list) => setOnlineUsers(list || []));
 
     s.on("receive-private-message", ({ roomId, message }) => {
-      setPrivateChats((p) => ({
-        ...p,
-        [roomId]: [...(p[roomId] || []), message],
+      setPrivateChats((prev) => ({
+        ...prev,
+        [roomId]: [...(prev[roomId] || []), message],
       }));
     });
 
-    return () => {
-      s.disconnect();
-    };
-  }, [username]);
+    s.on("private-messages-loaded", ({ roomId, messages }) => {
+      setPrivateChats((prev) => ({
+        ...prev,
+        [roomId]: messages,
+      }));
+    });
 
+    return () => s.disconnect();
+  }, [token, username]);
+
+  // 🚪 room join/leave
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || !currentRoom) return;
+
     socket.emit("join-room", { room: currentRoom });
+    return () => socket.emit("leave-room", { room: currentRoom });
   }, [currentRoom, socket]);
 
+  // 📤 send public message
   const sendRoomMessage = (text) => {
-    if (!socket || !username) return;
-    socket.emit("send-room-message", { room: currentRoom, username, text });
-  };
-
-  const startPrivateChat = (targetUsername) => {
-    // open modal and send first message or wait
-    setPrivateTarget(targetUsername);
-  };
-
-  const sendPrivateMessage = (toUsername, text) => {
-    if (!socket) return;
-    socket.emit("send-private-message", {
-      toUsername,
-      fromUsername: username,
+    if (!socket || !text) return;
+    socket.emit("send-room-message", {
+      room: currentRoom,
       text,
     });
   };
 
+  // 🔒 private chat
+  const startPrivateChat = (target) => {
+    if (!target || target === username) return;
+    setPrivateTarget(target);
+    socket.emit("load-private-messages", { toUsername: target });
+  };
+
+  const sendPrivateMessage = (toUsername, text) => {
+    if (!socket || !text) return;
+    socket.emit("send-private-message", {
+      toUsername,
+      text,
+    });
+  };
+
+  const privateRoomId =
+    privateTarget && [username, privateTarget].sort().join("#");
+
   return (
-    <div className="h-screen flex">
+    <div className="h-screen flex bg-gray-900 text-white">
       <Sidebar
         rooms={rooms}
-        users={onlineUsers}
-        onRoomSelect={(r) => setCurrentRoom(r)}
-        onUserSelect={(u) => startPrivateChat(u)}
+        users={onlineUsers.filter((u) => u !== username)}
+        onRoomSelect={setCurrentRoom}
+        onUserSelect={startPrivateChat}
+        currentRoom={currentRoom}
       />
 
       <div className="flex-1 flex flex-col">
-        <div className="p-4 border-b bg-slate-900 text-white">
+        <div className="p-4 border-b bg-slate-900">
           <div className="text-lg font-semibold">#{currentRoom}</div>
-          <div className="text-sm text-slate-400">
-            You: {username || "Connecting..."}
-          </div>
+          <div className="text-sm text-slate-400">You: {username}</div>
         </div>
 
-        <div className="flex-1 bg-slate-800 text-white overflow-hidden">
+        <div className="flex-1 bg-slate-800 overflow-hidden">
           <MessageList messages={roomMessages[currentRoom] || []} />
         </div>
 
@@ -100,13 +138,9 @@ export default function Chat() {
       {privateTarget && (
         <PrivateChatModal
           user={privateTarget}
-          messages={
-            privateChats[[privateTarget, username].sort().join("#")] || []
-          }
+          messages={privateChats[privateRoomId] || []}
           onClose={() => setPrivateTarget(null)}
-          onSend={(text) => {
-            sendPrivateMessage(privateTarget, text);
-          }}
+          onSend={(text) => sendPrivateMessage(privateTarget, text)}
         />
       )}
     </div>
