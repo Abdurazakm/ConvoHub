@@ -6,12 +6,12 @@ import MessageList from "../components/MessageList";
 import MessageInput from "../components/MessageInput";
 import PrivateChatModal from "../components/PrivateChatModal";
 
-const SERVER = "http://localhost:4000"; // ✅ FIXED PORT
+const SERVER = "http://localhost:4000";
 
 export default function Chat() {
   const navigate = useNavigate();
 
-  // ✅ persistent auth
+  // 🔐 persistent auth
   const token = localStorage.getItem("token");
   const username = localStorage.getItem("username");
 
@@ -23,28 +23,18 @@ export default function Chat() {
   const [privateChats, setPrivateChats] = useState({});
   const [privateTarget, setPrivateTarget] = useState(null);
 
-  // 🔐 protect route
+  // 🚫 protect route
   useEffect(() => {
-    if (!token || !username) {
-      navigate("/");
-    }
+    if (!token || !username) navigate("/");
   }, [token, username, navigate]);
 
   // 🔌 socket connection
   useEffect(() => {
     if (!token || !username) return;
 
-    const s = io(SERVER, {
-      auth: { token },
-    });
-
+    const s = io(SERVER, { auth: { token } });
     setSocket(s);
 
-    s.on("connect", () => {
-      console.log("Connected:", s.id);
-    });
-
-    // 📡 server events
     s.on("rooms-list", (rs) => setRooms(rs || []));
 
     s.on("room-messages", ({ room, messages }) => {
@@ -77,21 +67,17 @@ export default function Chat() {
     return () => s.disconnect();
   }, [token, username]);
 
-  // 🚪 room join/leave
+  // 🚪 join / leave room
   useEffect(() => {
     if (!socket || !currentRoom) return;
-
     socket.emit("join-room", { room: currentRoom });
     return () => socket.emit("leave-room", { room: currentRoom });
   }, [currentRoom, socket]);
 
-  // 📤 send public message
+  // 📤 send room message
   const sendRoomMessage = (text) => {
     if (!socket || !text) return;
-    socket.emit("send-room-message", {
-      room: currentRoom,
-      text,
-    });
+    socket.emit("send-room-message", { room: currentRoom, text });
   };
 
   // 🔒 private chat
@@ -103,10 +89,7 @@ export default function Chat() {
 
   const sendPrivateMessage = (toUsername, text) => {
     if (!socket || !text) return;
-    socket.emit("send-private-message", {
-      toUsername,
-      text,
-    });
+    socket.emit("send-private-message", { toUsername, text });
   };
 
   const privateRoomId =
@@ -129,7 +112,11 @@ export default function Chat() {
         </div>
 
         <div className="flex-1 bg-slate-800 overflow-hidden">
-          <MessageList messages={roomMessages[currentRoom] || []} />
+          {/* ✅ UPDATED */}
+          <MessageList
+            messages={roomMessages[currentRoom] || []}
+            currentUser={username}
+          />
         </div>
 
         <MessageInput onSend={sendRoomMessage} />
@@ -139,6 +126,7 @@ export default function Chat() {
         <PrivateChatModal
           user={privateTarget}
           messages={privateChats[privateRoomId] || []}
+          currentUser={username}   // ✅ UPDATED
           onClose={() => setPrivateTarget(null)}
           onSend={(text) => sendPrivateMessage(privateTarget, text)}
         />
