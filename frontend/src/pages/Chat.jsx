@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { io } from "socket.io-client";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
@@ -14,19 +14,36 @@ export default function Chat() {
   const username = localStorage.getItem("username");
 
   const [socket, setSocket] = useState(null);
+
   const [rooms, setRooms] = useState([]);
   const [currentRoom, setCurrentRoom] = useState("General");
   const [roomMessages, setRoomMessages] = useState({});
+  const [unreadRooms, setUnreadRooms] = useState({});
+
   const [users, setUsers] = useState([]);
   const [privateChats, setPrivateChats] = useState({});
   const [privateTarget, setPrivateTarget] = useState(null);
+  const [unreadPrivate, setUnreadPrivate] = useState({});
 
-  // Protect route
+  // 🔴 IMPORTANT refs (fix unread bug)
+  const currentRoomRef = useRef(currentRoom);
+  const privateTargetRef = useRef(privateTarget);
+
+  // 🔐 Protect route
   useEffect(() => {
     if (!token || !username) navigate("/");
   }, [token, username, navigate]);
 
-  // Socket connection
+  // 🔁 Keep refs updated
+  useEffect(() => {
+    currentRoomRef.current = currentRoom;
+  }, [currentRoom]);
+
+  useEffect(() => {
+    privateTargetRef.current = privateTarget;
+  }, [privateTarget]);
+
+  // 🔌 Socket connection
   useEffect(() => {
     if (!token || !username) return;
 
@@ -36,35 +53,55 @@ export default function Chat() {
     // Rooms
     s.on("rooms-list", (rs) => setRooms(rs || []));
 
-    // Users list
+    // Users
     s.on("users-list", (list) => {
       if (Array.isArray(list)) {
         setUsers(list.filter((u) => u.username !== username));
       }
     });
 
-    // Room messages
+    // Initial room messages
     s.on("room-messages", ({ room, messages }) => {
       setRoomMessages((prev) => ({ ...prev, [room]: messages }));
     });
 
-    // New room message
+    // 📢 New room message
     s.on("receive-room-message", ({ room, message }) => {
       setRoomMessages((prev) => ({
         ...prev,
         [room]: [...(prev[room] || []), message],
       }));
+
+      // ✅ unread channel count (FIXED)
+      if (room !== currentRoomRef.current) {
+        setUnreadRooms((prev) => ({
+          ...prev,
+          [room]: (prev[room] || 0) + 1,
+        }));
+      }
     });
 
-    // Private messages received
+    // 💬 Private message
     s.on("receive-private-message", ({ roomId, message }) => {
       setPrivateChats((prev) => ({
         ...prev,
         [roomId]: [...(prev[roomId] || []), message],
       }));
+
+      const activeRoom =
+        privateTargetRef.current &&
+        [username, privateTargetRef.current].sort().join("#");
+
+      // ✅ unread private count (already working, now correct)
+      if (roomId !== activeRoom) {
+        setUnreadPrivate((prev) => ({
+          ...prev,
+          [roomId]: (prev[roomId] || 0) + 1,
+        }));
+      }
     });
 
-    // Private messages loaded
+    // Load private history
     s.on("private-messages-loaded", ({ roomId, messages }) => {
       setPrivateChats((prev) => ({
         ...prev,
@@ -73,64 +110,74 @@ export default function Chat() {
     });
 
     // Restore previous private chats
-    // const savedChats = JSON.parse(localStorage.getItem("privateChats") || "[]");
-    // savedChats.forEach((roomId) => {
-    //   const otherUser = roomId.split("#").find((u) => u !== username);
-    //   if (otherUser) startPrivateChat(otherUser, s);
-    // });
+    const savedChats = JSON.parse(localStorage.getItem("privateChats") || "[]");
+    savedChats.forEach((roomId) => {
+      const otherUser = roomId.split("#").find((u) => u !== username);
+      if (otherUser) startPrivateChat(otherUser, s);
+    });
 
     return () => s.disconnect();
   }, [token, username]);
 
-  // Join/leave room + load messages
+  // 🔁 Join / Leave room
   useEffect(() => {
     if (!socket || !currentRoom) return;
 
     socket.emit("join-room", { room: currentRoom });
     socket.emit("get-room-messages", { room: currentRoom });
 
+    // ✅ reset unread for this room
+    setUnreadRooms((prev) => ({
+      ...prev,
+      [currentRoom]: 0,
+    }));
+
     return () => socket.emit("leave-room", { room: currentRoom });
   }, [currentRoom, socket]);
 
-  // Send room message
+  // 📤 Send room message
   const sendRoomMessage = (text) => {
     if (!socket || !text.trim()) return;
     socket.emit("send-room-message", { room: currentRoom, text });
   };
 
-  // Start private chat
-  const startPrivateChat = (target, s = socket) => {
-    if (!target || target === username || !s) return;
+  // ▶ Start private chat
+  const startPrivateChat = (target) => {
+    if (!target || target === username || !socket) return;
+
     setPrivateTarget(target);
 
     const roomId = [username, target].sort().join("#");
 
-    // Save active chats in localStorage
-    const saved = JSON.parse(localStorage.getItem("privateChats") || "[]");
-    if (!saved.includes(roomId)) {
-      saved.push(roomId);
-      localStorage.setItem("privateChats", JSON.stringify(saved));
-    }
+    // ✅ reset unread private
+    setUnreadPrivate((prev) => ({
+      ...prev,
+      [roomId]: 0,
+    }));
 
-    s.emit("load-private-messages", { toUsername: target });
+    socket.emit("load-private-messages", { toUsername: target });
   };
 
-  // Send private message
+  // 📤 Send private message
   const sendPrivateMessage = (toUsername, text) => {
     if (!socket || !text.trim()) return;
     socket.emit("send-private-message", { toUsername, text });
   };
 
-  const privateRoomId = privateTarget && [username, privateTarget].sort().join("#");
+  const privateRoomId =
+    privateTarget && [username, privateTarget].sort().join("#");
 
   return (
     <div className="h-screen flex bg-gray-900 text-white overflow-hidden">
       <Sidebar
         rooms={rooms}
         users={users}
+        currentRoom={currentRoom}
         onRoomSelect={setCurrentRoom}
         onUserSelect={startPrivateChat}
-        currentRoom={currentRoom}
+        unreadRooms={unreadRooms}
+        unreadPrivate={unreadPrivate}
+        currentUser={username}
       />
 
       <div className="flex-1 flex flex-col">
