@@ -57,7 +57,7 @@ export default async function roomEvents(io, socket) {
 
     await savePublicMessage(room, socket.username, text);
 
-    io.to(room).emit("receive-room-message", {
+    io.emit("receive-room-message", {
       room,
       message: {
         username: socket.username,

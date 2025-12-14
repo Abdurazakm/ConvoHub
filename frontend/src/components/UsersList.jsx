@@ -41,7 +41,7 @@ export default function UsersList({
             >
               <FaCommentDots size={16} />
               {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 bg-red-500 text-xs px-1 rounded-full">
+                <span className="absolute -top-1 -right-1 bg-red-500 text-xs text-white px-1 rounded-full">
                   {unreadCount}
                 </span>
               )}
